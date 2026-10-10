@@ -1,0 +1,20 @@
+Ref,Qty,Value / Part,Footprint,Side,Notes
+J5,1,1x08 female header 2.54 mm,PinSocket_1x08_P2.54mm_Vertical,Front,C3 Super Mini left row (5V GND 3V3 4 3 2 1 0)
+J6,1,1x08 female header 2.54 mm,PinSocket_1x08_P2.54mm_Vertical,Front,C3 Super Mini right row (5 6 7 8 9 10 20 21) - mechanical only
+J3,1,1x06 female header 2.54 mm,PinSocket_1x06_P2.54mm_Vertical,BACK,SIM800L interface row (GND TXD RXD RST VCC NET) - soldered from the front
+J8 or J9,1,1x06 female header 2.54 mm,PinSocket_1x06_P2.54mm_Vertical,BACK,SIM800L audio row (no connection) - fit ONE: J8 if the rows are 17.78 mm apart / J9 if 20.32 mm
+J4,1,1x04 female header 2.54 mm,PinSocket_1x04_P2.54mm_Vertical,Front,GPS board header (GND TX RX VCC from top)
+J1,1,JST-XH 2-pin (B2B-XH-A),JST_XH_B2B-XH-A_1x02_P2.50mm_Vertical,Front,1S Li-ion battery (pin 1 = +)
+SW1,1,Mini slide switch SPDT (SS12D00 / OS102011MS2Q type),SW_Slide_SPDT_Straight_CK_OS102011MS2Q,Front,Power switch (slider to the right = ON)
+C1,1,1000 uF 10 V electrolytic (8 mm),CP_Radial_D8.0mm_P3.50mm,Front,SIM800L burst buffer
+C2,1,100 nF ceramic,C_Disc_D3.0mm_W1.6mm_P2.50mm,Front,SIM800L decoupling
+C3,1,100 uF 10 V electrolytic (5 mm),CP_Radial_D5.0mm_P2.00mm,Front,5 V rail buffer
+R1,1,10 kOhm 1/8 W (small body),R_Axial_DIN0204_L3.6mm_D1.6mm_P5.08mm_Horizontal,Front,RXD level divider (ESP side); 1/4 W also fits with bent leads
+R2,1,20 kOhm 1/8 W (or 2 x 10k in series),R_Axial_DIN0204_L3.6mm_D1.6mm_P5.08mm_Horizontal,Front,RXD level divider (to GND)
+U3,1,MT3608 boost module (37 x 17 mm),custom 4-pad,BACK,Lies flat on the bottom side; ADJUST TO 5.0 V BEFORE fitting
+U1,1,ESP32-C3 Super Mini (with both 1x8 male headers soldered),-,Front,USB-C at the top edge
+U2,1,SIM800L mini module (both 1x6 male headers soldered) + antenna,-,BACK,Component side faces away from the board
+U4,1,NEO-M8N GPS board (4-pin male header) + patch antenna,-,Front,Lies flat over the lower half; foam pad under the far end
+-,1,Double-sided foam tape ~10 mm thick,-,Front,Supports the free end of the GPS board
+H1-H2,2,M2 screw + spacer >= 15 mm,MountingHole_2.2mm_M2,-,Spacers must be taller than the SIM800L on its sockets
+BT1,1,18650 / LiPo 1S cell (protected) with JST-XH plug,-,-,Charge it outside the board (TP4056 with protection)

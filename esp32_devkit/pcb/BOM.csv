@@ -1,0 +1,19 @@
+Ref,Qty,Value / Part,Footprint,Notes
+J5,1,1x15 female header 2.54 mm,PinSocket_1x15_P2.54mm_Vertical,ESP32 left row
+J6,1,1x15 female header 2.54 mm,PinSocket_1x15_P2.54mm_Vertical,ESP32 right row for 0.9 in (22.86 mm) boards - fit J6 OR J7
+J7,0-1,1x15 female header 2.54 mm,PinSocket_1x15_P2.54mm_Vertical,ESP32 right row for 1.0 in (25.40 mm) boards - fit J6 OR J7
+J3,1,1x06 female header 2.54 mm,PinSocket_1x06_P2.54mm_Vertical,SIM800L mini module (NET VCC RST RXD TXD GND)
+J4,1,1x04 male header 2.54 mm,PinHeader_1x04_P2.54mm_Vertical,GPS cable: 5V RX TX GND
+J1,1,JST-XH 2-pin (B2B-XH-A),JST_XH_B2B-XH-A_1x02_P2.50mm_Vertical,1S Li-ion battery (pin 1 = +)
+SW1,1,Mini slide switch SPDT (SS12D00 / OS102011MS2Q type),SW_Slide_SPDT_Straight_CK_OS102011MS2Q,Power switch
+C1,1,1000 uF 10 V electrolytic (8 mm),CP_Radial_D8.0mm_P3.50mm,SIM800L burst buffer - keep it
+C2,1,100 nF ceramic,C_Disc_D3.0mm_W1.6mm_P2.50mm,SIM800L decoupling (sits under the module)
+C3,1,100 uF 10 V electrolytic (5 mm),CP_Radial_D5.0mm_P2.00mm,5 V rail buffer
+R1,1,10 kOhm 1/4 W,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,RXD level divider (ESP32 side)
+R2,1,20 kOhm 1/4 W (or 2 x 10k in series),R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,RXD level divider (to GND)
+U3,1,MT3608 boost module (37 x 17 mm),custom 4-pad,Mounted on the BACK under the ESP32; ADJUST TO 5.0 V BEFORE fitting
+U1,1,ESP32 DOIT DevKit V1 (30-pin),-,Plugs into J5 + J6/J7
+U2,1,SIM800L mini module + spring antenna,-,Plugs into J3
+U4,1,NEO-M8N GPS module,-,Connected to J4 with a short 4-wire cable
+BT1,1,18650 Li-ion cell (protected) + holder with JST-XH plug,-,Charge it outside the board (e.g. TP4056 with protection)
+H1-H2,2,M2 screw + spacer,MountingHole_2.2mm_M2,Optional

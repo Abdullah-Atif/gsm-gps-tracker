@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live GPS Tracker</title>
+<!--
+  Live GPS Tracker - serverless web page
+  ---------------------------------------
+  Devices (ESP32 over Wi-Fi or SIM800L) publish their position to a free public
+  MQTT broker. This page subscribes to the broker over secure WebSocket and draws
+  the positions on an OpenStreetMap map. No backend server is needed, so the page
+  can be hosted on any static host (GitHub Pages) or opened as a local file.
+
+  Topics (TRACKER_KEY is a secret string shared by the devices and this page):
+    gpstrk/<TRACKER_KEY>/<device_id>/loc     JSON position, retained
+    gpstrk/<TRACKER_KEY>/<device_id>/status  "online" / "offline", retained (offline = last will)
+
+  The tracker key is read from the URL, e.g.  index.html#key=my-secret-key
+  so it is not stored in the source code / repository.
+-->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/mqtt@5/dist/mqtt.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #6b7385;
+    --border: #e3e6ec; --accent: #2563eb;
+    --ok: #16a34a; --warn: #d97706; --off: #9ca3af; --bad: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+               color: var(--text); background: var(--bg); }
+  .app { display: flex; height: 100%; }
+  #map { flex: 1; height: 100%; }
+  .panel { width: 340px; background: var(--panel); border-right: 1px solid var(--border);
+           display: flex; flex-direction: column; overflow-y: auto; }
+  .panel header { padding: 16px 18px 12px; border-bottom: 1px solid var(--border); }
+  .panel h1 { font-size: 18px; margin: 0 0 6px; }
+  .conn { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--off); display: inline-block; flex: none; }
+  .section { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  .device { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--border);
+            border-radius: 8px; margin-bottom: 8px; cursor: pointer; background: #fff; }
+  .device.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(37,99,235,.15); }
+  .device .name { font-weight: 600; font-size: 14px; }
+  .device .sub { font-size: 12px; color: var(--muted); }
+  .empty { font-size: 13px; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat { background: var(--bg); border-radius: 8px; padding: 9px 10px; }
+  .stat .k { font-size: 11px; color: var(--muted); }
+  .stat .v { font-size: 16px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .stat.wide { grid-column: span 2; }
+  .stat .v.small { font-size: 13px; font-weight: 500; }
+  a { color: var(--accent); }
+  .controls { display: flex; flex-direction: column; gap: 10px; font-size: 14px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  input[type=text], button { font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 6px;
+                             border: 1px solid var(--border); background: #fff; color: var(--text); }
+  input[type=text] { flex: 1; min-width: 0; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .car-icon svg { width: 34px; height: 34px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
+  @media (max-width: 760px) {
+    .app { flex-direction: column-reverse; }
+    .panel { width: 100%; height: 45%; border-right: none; border-top: 1px solid var(--border); }
+    #map { height: 55%; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel">
+    <header>
+      <h1>Live GPS Tracker</h1>
+      <div class="conn"><span class="dot" id="connDot"></span><span id="connText">Not connected</span></div>
+    </header>
+
+    <div class="section" id="keySection">
+      <h2>Tracker key</h2>
+      <div class="controls">
+        <div class="row">
+          <input type="text" id="keyInput" placeholder="Same TRACKER_KEY as in the ESP32 sketch" autocomplete="off">
+          <button class="primary" id="keyBtn">Connect</button>
+        </div>
+        <div class="hint">Share this page with the key in the link: <span id="shareHint">…/index.html#key=YOUR_KEY</span></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Devices</h2>
+      <div id="deviceList"><div class="empty">Waiting for a device…</div></div>
+    </div>
+
+    <div class="section" id="detailsSection" hidden>
+      <h2 id="detailsTitle">Details</h2>
+      <div class="grid">
+        <div class="stat"><div class="k">Status</div><div class="v small" id="dStatus">–</div></div>
+        <div class="stat"><div class="k">GPS time</div><div class="v small" id="dAgo">–</div></div>
+        <div class="stat"><div class="k">Speed</div><div class="v" id="dSpeed">–</div></div>
+        <div class="stat"><div class="k">Heading</div><div class="v" id="dCourse">–</div></div>
+        <div class="stat"><div class="k">Satellites</div><div class="v" id="dSats">–</div></div>
+        <div class="stat"><div class="k">HDOP</div><div class="v" id="dHdop">–</div></div>
+        <div class="stat wide"><div class="k">Position</div><div class="v small" id="dPos">–</div></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Map</h2>
+      <div class="controls">
+        <label class="row"><input type="checkbox" id="follow" checked> Follow selected vehicle</label>
+        <div class="row"><button id="clearTrail">Clear trail</button></div>
+        <div class="hint">The trail is kept in this browser only (no server). It survives a page reload.</div>
+      </div>
+    </div>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+const BROKER_URL = 'wss://broker.emqx.io:8084/mqtt';  // free public broker (secure WebSocket)
+const TOPIC_PREFIX = 'gpstrk';
+const STALE_AFTER_S = 30;          // no new GPS time for this long -> shown as "last known"
+const MAX_TRAIL_POINTS = 3000;
+const MIN_TRAIL_STEP_M = 3;        // ignore GPS jitter smaller than this when drawing the trail
+const DEFAULT_VIEW = [23.7265, 90.3925];
+
+// ---------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } },
+};
+const num = (v) => (typeof v === 'number' && isFinite(v)) ? v : null;
+
+function distM(a, b) {               // haversine distance in meters
+  const R = 6371000, r = Math.PI / 180;
+  const dLat = (b[0] - a[0]) * r, dLng = (b[1] - a[1]) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function compass(deg) { return ['N','NE','E','SE','S','SW','W','NW'][Math.round(deg / 45) % 8]; }
+function agoText(ms) {
+  if (ms == null) return '–';
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return s + ' s ago';
+  if (s < 3600) return Math.floor(s / 60) + ' min ago';
+  if (s < 86400) return Math.floor(s / 3600) + ' h ago';
+  return Math.floor(s / 86400) + ' d ago';
+}
+
+// ---------------------------------------------------------------------------
+// Map
+// ---------------------------------------------------------------------------
+const map = L.map('map').setView(DEFAULT_VIEW, 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+const state = { key: null, devices: {}, markers: {}, trails: {}, selected: null, firstFixShown: false };
+
+function statusOf(d) {
+  if (d.online === false) return { text: 'Offline', hex: '#9ca3af' };
+  const fresh = d.gpsMs != null && Date.now() - d.gpsMs < STALE_AFTER_S * 1000;
+  if (!fresh) return d.online ? { text: 'Online · waiting for data', hex: '#d97706' }
+                              : { text: 'Last known position', hex: '#9ca3af' };
+  if (!d.fix) return { text: 'Online · no GPS fix', hex: '#d97706' };
+  return { text: 'Online · live', hex: '#16a34a' };
+}
+
+function arrowIcon(color, course) {
+  const svg = `<svg viewBox="0 0 40 40" style="transform: rotate(${course || 0}deg)">
+      <circle cx="20" cy="20" r="17" fill="white" stroke="${color}" stroke-width="3"/>
+      <path d="M20 7 L29 29 L20 24 L11 29 Z" fill="${color}"/></svg>`;
+  return L.divIcon({ className: 'car-icon', html: svg, iconSize: [34, 34], iconAnchor: [17, 17] });
+}
+
+function trailKey(id) { return `trail:${state.key}:${id}`; }
+
+function trailOf(id) {
+  if (!state.trails[id]) {
+    const saved = store.get(trailKey(id)) || [];
+    state.trails[id] = L.polyline(saved, { color: '#2563eb', weight: 4, opacity: 0.75 }).addTo(map);
+  }
+  return state.trails[id];
+}
+
+function appendTrail(id, ll) {
+  const t = trailOf(id);
+  const pts = t.getLatLngs();
+  const last = pts.length ? [pts[pts.length - 1].lat, pts[pts.length - 1].lng] : null;
+  if (last && distM(last, ll) < MIN_TRAIL_STEP_M) return;
+  t.addLatLng(ll);
+  let arr = t.getLatLngs().map(p => [p.lat, p.lng]);
+  if (arr.length > MAX_TRAIL_POINTS) { arr = arr.slice(-MAX_TRAIL_POINTS); t.setLatLngs(arr); }
+  store.set(trailKey(id), arr);
+}
+
+function updateMarker(id) {
+  const d = state.devices[id];
+  if (d.lat == null) return;
+  const st = statusOf(d);
+  const iconKey = st.hex + '|' + Math.round(d.course || 0);
+  let m = state.markers[id];
+  if (!m) {
+    m = state.markers[id] = L.marker([d.lat, d.lng], { icon: arrowIcon(st.hex, d.course) })
+      .addTo(map).bindTooltip(id).on('click', () => selectDevice(id, false));
+  } else {
+    m.setLatLng([d.lat, d.lng]);
+    if (m._iconKey !== iconKey) m.setIcon(arrowIcon(st.hex, d.course));
+  }
+  m._iconKey = iconKey;
+}
+
+function renderDeviceList() {
+  const ids = Object.keys(state.devices).sort();
+  if (!ids.length) return;
+  const list = $('deviceList');
+  list.innerHTML = '';
+  for (const id of ids) {
+    const d = state.devices[id], st = statusOf(d);
+    const el = document.createElement('div');
+    el.className = 'device' + (id === state.selected ? ' selected' : '');
+    const dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = st.hex;
+    const box = document.createElement('div');
+    const name = document.createElement('div'); name.className = 'name'; name.textContent = id;
+    const sub = document.createElement('div'); sub.className = 'sub';
+    sub.textContent = st.text + ' · ' + agoText(d.gpsMs);
+    box.append(name, sub); el.append(dot, box);
+    el.onclick = () => selectDevice(id, true);
+    list.appendChild(el);
+  }
+}
+
+function renderDetails() {
+  const d = state.devices[state.selected];
+  if (!d) { $('detailsSection').hidden = true; return; }
+  $('detailsSection').hidden = false;
+  $('detailsTitle').textContent = d.id;
+  const st = statusOf(d);
+  $('dStatus').textContent = st.text; $('dStatus').style.color = st.hex;
+  $('dAgo').textContent = agoText(d.gpsMs);
+  $('dSpeed').textContent = d.speed_kmh != null ? d.speed_kmh.toFixed(1) + ' km/h' : '–';
+  $('dCourse').textContent = d.course != null ? Math.round(d.course) + '° ' + compass(d.course) : '–';
+  $('dSats').textContent = d.sats != null ? d.sats : '–';
+  $('dHdop').textContent = d.hdop != null ? d.hdop.toFixed(2) : '–';
+  const pos = $('dPos'); pos.textContent = '';
+  if (d.lat != null) {
+    const a = document.createElement('a');
+    a.href = `https://maps.google.com/?q=${d.lat},${d.lng}`; a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = d.lat.toFixed(6) + ', ' + d.lng.toFixed(6);
+    pos.appendChild(a);
+  } else pos.textContent = 'No position yet';
+}
+
+function selectDevice(id, pan) {
+  state.selected = id;
+  const d = state.devices[id];
+  if (pan && d && d.lat != null) map.setView([d.lat, d.lng], Math.max(map.getZoom(), 16));
+  renderDeviceList(); renderDetails();
+}
+
+function device(id) {
+  if (!state.devices[id]) state.devices[id] = { id, online: null, fix: false };
+  if (!state.selected) state.selected = id;
+  return state.devices[id];
+}
+
+// ---------------------------------------------------------------------------
+// Incoming MQTT messages
+// ---------------------------------------------------------------------------
+function onLocation(id, msg, retained) {
+  const d = device(id);
+  d.fix = msg.fix === true;
+  d.sats = num(msg.sats); d.hdop = num(msg.hdop);
+  const t = typeof msg.gps_time === 'string' ? Date.parse(msg.gps_time) : NaN;
+  d.gpsMs = isNaN(t) ? (retained ? null : Date.now()) : t;
+  const lat = num(msg.lat), lng = num(msg.lng);
+  if (d.fix && lat != null && lng != null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+    d.lat = lat; d.lng = lng;
+    d.speed_kmh = num(msg.speed_kmh); d.course = num(msg.course);
+    trailOf(id);                     // restore saved trail first
+    appendTrail(id, [lat, lng]);
+    if (!state.firstFixShown) { map.setView([lat, lng], 17); state.firstFixShown = true; }
+    else if ($('follow').checked && state.selected === id) map.panTo([lat, lng]);
+  }
+  updateMarker(id); renderDeviceList(); renderDetails();
+}
+
+function onStatus(id, text) {
+  const d = device(id);
+  d.online = text === 'online';
+  if (d.lat != null) updateMarker(id);
+  renderDeviceList(); renderDetails();
+}
+
+// ---------------------------------------------------------------------------
+// MQTT connection
+// ---------------------------------------------------------------------------
+let client = null;
+
+function setConn(color, text) { $('connDot').style.background = color; $('connText').textContent = text; }
+
+function connect(key) {
+  if (client) { client.end(true); client = null; }
+  state.key = key;
+  const root = `${TOPIC_PREFIX}/${key}`;
+  setConn('var(--warn)', 'Connecting to broker…');
+  client = mqtt.connect(BROKER_URL, {
+    clientId: 'web-' + Math.random().toString(16).slice(2, 10),
+    clean: true, reconnectPeriod: 3000, connectTimeout: 15000,
+  });
+  client.on('connect', () => {
+    setConn('var(--ok)', 'Connected (live)');
+    client.subscribe([`${root}/+/loc`, `${root}/+/status`], { qos: 0 });
+  });
+  client.on('reconnect', () => setConn('var(--warn)', 'Reconnecting…'));
+  client.on('offline', () => setConn('var(--bad)', 'Offline – check internet'));
+  client.on('error', (e) => setConn('var(--bad)', 'Error: ' + e.message));
+  client.on('message', (topic, payload, packet) => {
+    const parts = topic.split('/');                 // gpstrk / key / device / kind
+    if (parts.length !== 4) return;
+    const id = parts[2].slice(0, 32), kind = parts[3], text = payload.toString();
+    if (kind === 'status') return onStatus(id, text.trim());
+    if (kind === 'loc') {
+      let msg; try { msg = JSON.parse(text); } catch (e) { return; }
+      if (msg && typeof msg === 'object') onLocation(id, msg, packet.retain);
+    }
+  });
+}
+
+function startWithKey(key) {
+  key = (key || '').trim().replace(/[#+/\s]/g, '');   // MQTT wildcard / separator chars are not allowed
+  if (!key) return;
+  store.set('trackerKey', key);
+  $('keyInput').value = key;
+  $('shareHint').textContent = location.href.split('#')[0] + '#key=' + key;
+  history.replaceState(null, '', '#key=' + encodeURIComponent(key));
+  connect(key);
+}
+
+$('keyBtn').onclick = () => startWithKey($('keyInput').value);
+$('keyInput').onkeydown = (e) => { if (e.key === 'Enter') startWithKey($('keyInput').value); };
+$('clearTrail').onclick = () => {
+  const id = state.selected; if (!id) return;
+  if (state.trails[id]) state.trails[id].setLatLngs([]);
+  store.set(trailKey(id), []);
+};
+
+// Refresh "x s ago" / status colors every second
+setInterval(() => { for (const id in state.devices) updateMarker(id); renderDeviceList(); renderDetails(); }, 1000);
+
+// Key from the link (#key=...) or from the last visit
+const fromHash = new URLSearchParams(location.hash.slice(1)).get('key');
+startWithKey(fromHash || store.get('trackerKey') || '');
+</script>
+</body>
+</html>
