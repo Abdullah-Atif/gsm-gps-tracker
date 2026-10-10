@@ -1,0 +1,10 @@
+# KiCad local/backup files
+*.kicad_prl
+*-backups/
+fp-info-cache
+_autosave-*
+*.bak
+# Arduino / OS
+build/
+.DS_Store
+Thumbs.db
